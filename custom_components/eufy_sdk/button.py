@@ -55,6 +55,14 @@ async def async_setup_entry(
         if "ptz" in dev.get("capabilities", [])
         for action, name, icon in PTZ_STEPS
     )
+    # Calibration rides the same capability: a sweep to the stops and back to
+    # centre, for a camera whose presets have drifted. A service action rather than
+    # a control, so it sits under Configuration instead of among the d-pad.
+    entities.extend(
+        EufyPtzCalibrateButton(coordinator, sn)
+        for sn, dev in coordinator.data.items()
+        if "ptz" in dev.get("capabilities", [])
+    )
     async_add_entities(entities)
 
 
@@ -123,3 +131,27 @@ class EufyPtzButton(EufySdkDeviceEntity, ButtonEntity):
         """Step the camera one notch in this button's direction."""
         client = self.coordinator.config_entry.runtime_data.client
         await client.action(self._sn, self._action)
+
+
+class EufyPtzCalibrateButton(EufySdkDeviceEntity, ButtonEntity):
+    """
+    Re-centre the pan/tilt mechanism.
+
+    The camera sweeps to its stops and back: a few seconds, and the view moves.
+    Fire-and-forget like every PTZ command — the press returns when the frame
+    leaves, not when the sweep ends.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_icon = "mdi:crosshairs-gps"
+    _attr_name = "Calibrate"
+
+    def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
+        """Bind to a pan-tilt camera serial."""
+        super().__init__(coordinator, sn)
+        self._attr_unique_id = f"{sn}_ptz_calibrate"
+
+    async def async_press(self) -> None:
+        """Start a calibration sweep."""
+        client = self.coordinator.config_entry.runtime_data.client
+        await client.action(self._sn, "calibrate")
