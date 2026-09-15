@@ -45,25 +45,6 @@ PLATFORMS: list[Platform] = [
     Platform.LIGHT,
 ]
 
-# Property entities known to have been published by older bridge manifests. The bridge now omits every
-# property without observed state; list their plain-property unique-id suffixes here so an existing HA
-# registry is cleaned too. Keep this explicit because static entities share `{sn}_{suffix}` and must
-# never be mistaken for a stale property. Bitfield children (e.g. aiDetectType_*) are handled below.
-PRUNABLE_PROPERTY_NAMES = frozenset(
-    {
-        "antiTheftDetection",
-        "audioRecording",
-        "humanOnlyAtNight",
-        "loiteringDetection",
-        "motionDetection",
-        "nightVision",
-        "recordingQuality",
-        "snoozeTime",
-        "testMode",
-    }
-)
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> bool:
     """Set up eufy_sdk from a config entry."""
     poll_min = entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL_MIN)
@@ -126,26 +107,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
             LOGGER.warning("could not fetch properties for %s: %s", sn, err)
     entry.runtime_data.properties = properties
 
-    _prune_stale_property_entities(hass, entry.entry_id, properties)
+    _prune_stale_property_entities(
+        hass, entry.entry_id, properties, coordinator.data
+    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 def _prune_stale_property_entities(
-    hass: HomeAssistant, entry_id: str, properties: dict[str, list]
+    hass: HomeAssistant,
+    entry_id: str,
+    properties: dict[str, list],
+    devices: dict[str, dict],
 ) -> None:
     """
     Remove registry entities for properties the bridge no longer advertises.
 
-    The bridge prunes its manifest to what a device actually reads (see its
-    `propertySpecs`), but that only changes what gets CREATED — an entity from before
-    the prune, or from a property that has simply gone quiet, stays in the registry
-    forever: `available` only checks that the device itself is present, never that its
-    own property still is, so it sits `unavailable` with no way back short of a manual
-    delete. This is the other half of that prune, run every setup so a device that
-    drops a property (or a fresh install that prunes from the start) cleans up on its
-    own.
+    The model manifest, not the presence of a current value, decides whether a property
+    exists. This cleanup is deliberately restricted to capabilities explicitly retired
+    by the SDK; a temporarily unread or write-only property must survive.
 
     Only two entity shapes are ever touched, both built entirely from `properties` —
     never a static entity (reboot, the PTZ buttons, camera, stream_url, ...), which
@@ -172,8 +153,18 @@ def _prune_stale_property_entities(
         )
         if bitfield_prop is not None and bitfield_prop in names:
             continue  # the bitfield property is still live — its sub-switch survives
-        if bitfield_prop is None and suffix not in PRUNABLE_PROPERTY_NAMES:
-            continue  # not a known property (could be reboot, ptz_*, camera, ...)
+        if bitfield_prop is None:
+            device = devices.get(sn, {})
+            retired_for_device: set[str] = set()
+            # Test mode belongs to standalone motion sensors, never cameras.
+            if device.get("codec") != "sensor":
+                retired_for_device.add("testMode")
+            # T8410 exposes autoNightVision (1013), not the three-state
+            # nightVision (1277) property. Other camera models keep it.
+            if device.get("model") == "T8410":
+                retired_for_device.add("nightVision")
+            if suffix not in retired_for_device:
+                continue  # valid write-only, another model's property, or static entity
 
         LOGGER.debug(
             "removing stale entity %s (property gone from the bridge manifest)",
