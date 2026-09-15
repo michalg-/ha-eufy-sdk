@@ -20,10 +20,10 @@ if TYPE_CHECKING:
 # The four movement verbs, ordered as a d-pad reads them. Each is a no-arg method on the
 # SDK's `ptz` surface, so `device.action` carries them with no argument mapping at all.
 PTZ_STEPS: tuple[tuple[str, str, str], ...] = (
-    ("up", "Tilt up", "mdi:arrow-up-bold"),
-    ("down", "Tilt down", "mdi:arrow-down-bold"),
-    ("left", "Pan left", "mdi:arrow-left-bold"),
-    ("right", "Pan right", "mdi:arrow-right-bold"),
+    ("up", "PTZ · Tilt up", "mdi:arrow-up-bold"),
+    ("down", "PTZ · Tilt down", "mdi:arrow-down-bold"),
+    ("left", "PTZ · Pan left", "mdi:arrow-left-bold"),
+    ("right", "PTZ · Pan right", "mdi:arrow-right-bold"),
 )
 
 
@@ -71,7 +71,7 @@ class EufySdkRebootButton(EufySdkDeviceEntity, ButtonEntity):
 
     _attr_device_class = ButtonDeviceClass.RESTART
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_name = "Reboot"
+    _attr_name = "System · Reboot"
 
     def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
         """Bind to a HomeBase serial."""
@@ -89,7 +89,7 @@ class EufyRefreshEventButton(EufySdkDeviceEntity, ButtonEntity):
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:image-refresh"
-    _attr_name = "Refresh Last Event"
+    _attr_name = "Video · Refresh last event"
 
     def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
         """Bind to a camera/doorbell serial."""
@@ -144,7 +144,7 @@ class EufyPtzCalibrateButton(EufySdkDeviceEntity, ButtonEntity):
 
     _attr_entity_category = EntityCategory.CONFIG
     _attr_icon = "mdi:crosshairs-gps"
-    _attr_name = "Calibrate"
+    _attr_name = "PTZ · Calibrate"
 
     def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
         """Bind to a pan-tilt camera serial."""

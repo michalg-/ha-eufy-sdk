@@ -56,8 +56,53 @@ class EufySdkDeviceEntity(CoordinatorEntity[EufySdkDataUpdateCoordinator]):
         return super().available and self._sn in self.coordinator.data
 
 
+PROPERTY_LABELS: dict[str, str] = {
+    # Camera / security
+    "enabled": "Camera · Enabled",
+    "statusLed": "Camera · Status LED",
+    "armingMode": "Security · Arming mode",
+    "antiTheftDetection": "Security · Anti-theft detection",
+    # Detection — the shared prefix keeps the master switch beside its type select.
+    "motionDetection": "Detection · Motion enabled",
+    "petDetection": "Detection · Pet enabled",
+    "aiDetectType": "Detection · Type",
+    "motionSensitivity": "Detection · Motion sensitivity",
+    "indoorSensitivity": "Detection · Motion sensitivity",
+    "soloSensitivity": "Detection · Motion sensitivity",
+    "pirSensitivityRaw": "Detection · PIR sensitivity",
+    "sensorPirSensitivity": "Detection · PIR sensitivity",
+    "soundDetection": "Detection · Sound enabled",
+    "soundDetectionSensitivity": "Detection · Sound sensitivity",
+    "soundDetectionType": "Detection · Sound type",
+    "humanOnlyAtNight": "Detection · Human only at night",
+    "loiteringDetection": "Detection · Loitering",
+    "testMode": "Detection · Test mode",
+    # Video / recording
+    "imageFlipped": "Video · Image flipped",
+    "watermark": "Video · Watermark",
+    "nightVision": "Video · Night vision mode",
+    "autoNightVision": "Video · Night vision auto",
+    "streamingQuality": "Video · Streaming quality",
+    "recordingQuality": "Video · Recording quality",
+    "recordingMode": "Video · Recording mode",
+    # Audio
+    "microphone": "Audio · Microphone",
+    "speaker": "Audio · Speaker",
+    "speakerVolume": "Audio · Speaker volume",
+    "audioRecording": "Audio · Recording",
+    # PTZ / notifications / network
+    "rotationSpeed": "PTZ · Rotation speed",
+    "notificationStyle": "Notifications · Style",
+    "snoozeTime": "Notifications · Snooze time",
+    "rtspStream": "Network · RTSP enabled",
+    "rtspUrl": "Network · RTSP URL",
+}
+
+
 def label_for(prop: str) -> str:
-    """Turn a camelCase name into a human label ('statusLed' -> 'Status Led')."""
+    """Return a grouped friendly label, falling back to a camelCase split."""
+    if label := PROPERTY_LABELS.get(prop):
+        return label
     spaced = re.sub(r"(?<!^)(?=[A-Z])", " ", prop)
     return spaced[:1].upper() + spaced[1:]
 

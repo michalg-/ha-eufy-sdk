@@ -95,7 +95,8 @@ class EufyBitmaskSwitch(EufySdkPropertyEntity, SwitchEntity):
         self._bit: int = bitdef["bit"]
         self._base: int = bitdef["base"]
         self._attr_unique_id = f"{sn}_{self._prop}_{self._bit}"
-        self._attr_name = bitdef["label"]
+        label = bitdef["label"].removeprefix("Detect ")
+        self._attr_name = f"Detection · {label}"
         self._attr_entity_category = EntityCategory.CONFIG
 
     def _mask(self) -> int:
