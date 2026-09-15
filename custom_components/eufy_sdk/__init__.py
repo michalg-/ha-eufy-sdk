@@ -137,22 +137,25 @@ def _prune_stale_property_entities(
         the bitfield property's presence, not the sub-switch's, is what the bridge
         reports.
     """
-    current: dict[str, set[str]] = {
-        sn: {p["name"] for p in specs} for sn, specs in properties.items()
+    current: dict[str, dict[str, dict]] = {
+        sn: {p["name"]: p for p in specs} for sn, specs in properties.items()
     }
 
     registry = er.async_get(hass)
     for entry_entity in er.async_entries_for_config_entry(registry, entry_id):
         sn, _, suffix = entry_entity.unique_id.partition("_")
-        names = current.get(sn)
-        if names is None or not suffix or suffix in names:
+        specs = current.get(sn)
+        if specs is None or not suffix or suffix in specs:
             continue  # wrong device, no property data yet, or still a live property
 
         bitfield_prop = next(
             (p for p in BITFIELD_SWITCHES if suffix.startswith(f"{p}_")), None
         )
-        if bitfield_prop is not None and bitfield_prop in names:
-            continue  # the bitfield property is still live — its sub-switch survives
+        if (
+            bitfield_prop is not None
+            and specs.get(bitfield_prop, {}).get("kind") == "bitfield"
+        ):
+            continue  # the parent is still a bitfield — its sub-switch survives
         if bitfield_prop is None:
             device = devices.get(sn, {})
             retired_for_device: set[str] = set()
