@@ -45,11 +45,23 @@ PLATFORMS: list[Platform] = [
     Platform.LIGHT,
 ]
 
-# Property names that older versions of this fork published on device families where they can never
-# work. Keep this deliberately explicit: static entities share the same `{sn}_{suffix}` unique-id
-# shape, so deleting every suffix absent from today's manifest could also remove PTZ/camera/event
-# entities. A retired property is removed only when the current device manifest no longer contains it.
-RETIRED_PROPERTY_NAMES = frozenset({"testMode", "nightVision"})
+# Property entities known to have been published by older bridge manifests. The bridge now omits every
+# property without observed state; list their plain-property unique-id suffixes here so an existing HA
+# registry is cleaned too. Keep this explicit because static entities share `{sn}_{suffix}` and must
+# never be mistaken for a stale property. Bitfield children (e.g. aiDetectType_*) are handled below.
+PRUNABLE_PROPERTY_NAMES = frozenset(
+    {
+        "antiTheftDetection",
+        "audioRecording",
+        "humanOnlyAtNight",
+        "loiteringDetection",
+        "motionDetection",
+        "nightVision",
+        "recordingQuality",
+        "snoozeTime",
+        "testMode",
+    }
+)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> bool:
@@ -160,8 +172,8 @@ def _prune_stale_property_entities(
         )
         if bitfield_prop is not None and bitfield_prop in names:
             continue  # the bitfield property is still live — its sub-switch survives
-        if bitfield_prop is None and suffix not in RETIRED_PROPERTY_NAMES:
-            continue  # not a known retired property (could be reboot, ptz_*, camera, ...)
+        if bitfield_prop is None and suffix not in PRUNABLE_PROPERTY_NAMES:
+            continue  # not a known property (could be reboot, ptz_*, camera, ...)
 
         LOGGER.debug(
             "removing stale entity %s (property gone from the bridge manifest)",
