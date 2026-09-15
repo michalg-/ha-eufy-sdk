@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import ATTRIBUTION, DOMAIN
@@ -107,8 +109,17 @@ def classify(spec: dict[str, Any]) -> str | None:
     return None
 
 
-class EufySdkPropertyEntity(EufySdkDeviceEntity):
-    """An entity bound to one property, reading its live value from the `state` map."""
+class EufySdkPropertyEntity(EufySdkDeviceEntity, RestoreEntity):
+    """
+    An entity bound to one property, reading its live value from the `state` map.
+
+    `RestoreEntity` only actually restores anything for a WRITABLE property — see
+    `async_added_to_hass`. `EufySdkPropertySensor`/binary_sensor share this same
+    base for read-only properties, where restoring a stale value across an HA
+    restart would be wrong (the real value may genuinely have changed while HA
+    was down); gating on `self._spec["writable"]` keeps those untouched without
+    a separate class hierarchy.
+    """
 
     def __init__(
         self,
@@ -170,6 +181,46 @@ class EufySdkPropertyEntity(EufySdkDeviceEntity):
         if self._prop in self.device.get("state", {}):
             self._assumed_value = None
             self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        """
+        Restore the last-written value across an HA restart, for a writable property.
+
+        `_assumed_value` lives only in memory (see `write`), so an HA restart loses it —
+        exactly the properties this exists for (motion/pet detection, audio recording,
+        night vision, ...) never reappear in `state` on their own, so they would show
+        "unknown" again despite the camera still holding whatever was last set. Restore
+        only when the live read is ALREADY absent: a property that reads fine needs no
+        help, and a stale restored value should never outrank a fresh one.
+        """
+        await super().async_added_to_hass()
+        if not self._spec.get("writable") or self._prop in self.device.get("state", {}):
+            return
+        last = await self.async_get_last_state()
+        if last is None or last.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+            return
+        value = self._value_from_restored_state(last.state)
+        if value is not None:
+            self._assumed_value = value
+
+    def _value_from_restored_state(self, state: str) -> Any:
+        """
+        Parse a restored state STRING back to this property's raw value type.
+
+        The base default handles a plain bool/number/string round-trip; a platform
+        whose displayed state isn't the raw value verbatim (a select's label, a
+        bitmask switch's single bit) overrides this with its own inverse mapping.
+        """
+        if state in ("on", "off"):
+            return state == "on"
+        try:
+            return int(state)
+        except ValueError:
+            pass
+        try:
+            return float(state)
+        except ValueError:
+            return state
 
     async def async_will_remove_from_hass(self) -> None:
         """Cancel a pending delayed refresh when the entity goes away."""

@@ -103,6 +103,19 @@ class EufyBitmaskSwitch(EufySdkPropertyEntity, SwitchEntity):
         v = self.prop_value
         return int(v) if isinstance(v, (int, float)) else self._base
 
+    def _value_from_restored_state(self, _state: str) -> Any:
+        """
+        Never restore: this holds the FULL mask, not this bit's own on/off.
+
+        The base default would parse a restored "on"/"off" into a bare bool — and
+        since `bool` is an `int` subclass, `_mask()`'s `isinstance(v, (int, float))`
+        check would accept it and read the mask back as 0 or 1, corrupting every
+        OTHER bit on the next write. One bit's last-known state says nothing about
+        the other bits it shares a mask with, so there is nothing safe to restore
+        here at all.
+        """
+        return None
+
     @property
     def is_on(self) -> bool | None:
         """On when this bit is set in the current mask."""

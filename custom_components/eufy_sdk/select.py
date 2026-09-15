@@ -56,6 +56,13 @@ class EufySdkSelect(EufySdkPropertyEntity, SelectEntity):
         v = self.prop_value
         return None if v is None else self._label_by_raw.get(str(v))
 
+    def _value_from_restored_state(self, state: str) -> Any:
+        """Map a select's restored state — its label — back to the raw value."""
+        raw = self._raw_by_label.get(state)
+        if raw is None:
+            return None
+        return int(raw) if raw.lstrip("-").isdigit() else raw
+
     async def async_select_option(self, option: str) -> None:
         """Write the raw value behind the chosen label."""
         raw = self._raw_by_label.get(option)
