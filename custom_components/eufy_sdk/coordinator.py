@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
+from homeassistant.core import callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -24,6 +25,32 @@ class EufySdkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict]]):
     # reassigned per-update, so the class-level {} is only an initial fallback. Live
     # values arrive via `solixReading` events.
     solix_devices: ClassVar[dict[str, dict]] = {}
+    _bridge_refresh_generation = 0
+    _completed_bridge_refresh_generation = 0
+
+    async def async_force_bridge_refresh(self) -> None:
+        """Refresh HA state from a newly fetched SDK/cloud device snapshot."""
+        self._bridge_refresh_generation += 1
+        await self.async_request_refresh()
+
+    @callback
+    def apply_property_changed(self, event: dict[str, Any]) -> bool:
+        """Land one bridge property event directly in coordinator state."""
+        sn = event.get("deviceSn")
+        prop = event.get("property")
+        if not isinstance(sn, str) or not isinstance(prop, str) or "value" not in event:
+            return False
+        current = self.data.get(sn)
+        if current is None:
+            return False
+        devices = dict(self.data)
+        device = dict(current)
+        state = dict(device.get("state") or {})
+        state[prop] = event["value"]
+        device["state"] = state
+        devices[sn] = device
+        self.async_set_updated_data(devices)
+        return True
 
     async def _async_update_data(self) -> dict[str, dict]:
         """Ensure the connection is up, confirm we're authed, and return the devices."""
@@ -43,7 +70,15 @@ class EufySdkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict]]):
                 # one boot-window poll must not stop updates indefinitely.
                 msg = f"bridge not ready yet (state: {state})"
                 raise UpdateFailed(msg)
-            devices = await client.list_devices()
+            refresh_generation = self._bridge_refresh_generation
+            force_bridge_refresh = (
+                refresh_generation != self._completed_bridge_refresh_generation
+            )
+            devices = await client.list_devices(refresh=force_bridge_refresh)
+            if force_bridge_refresh:
+                # Record only the generation this request fulfilled. If another write
+                # arrived while it was in flight, the newer generation remains pending.
+                self._completed_bridge_refresh_generation = refresh_generation
         except EufySdkApiClientAuthenticationError as err:
             raise ConfigEntryAuthFailed(err) from err
         except EufySdkApiClientError as err:

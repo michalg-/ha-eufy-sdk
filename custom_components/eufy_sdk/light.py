@@ -189,12 +189,16 @@ class EufySdkSmartLight(EufySdkDeviceEntity, LightEntity):
 
     @callback
     def _reconcile(self, _now: Any) -> None:
-        """Drop the optimistic holds and re-render to the reported state."""
+        """Start a fresh bridge/cloud pull before dropping optimistic state."""
         self._refresh_unsub = None
+        self.hass.async_create_task(self._async_reconcile())
+
+    async def _async_reconcile(self) -> None:
+        """Reconcile optimistic light state against a forced fresh snapshot."""
+        await self.coordinator.async_force_bridge_refresh()
         self._assumed_on = None
         self._assumed_pct = None
         self._assumed_effect = None
-        self.hass.async_create_task(self.coordinator.async_request_refresh())
         self.async_write_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:

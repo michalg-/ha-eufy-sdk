@@ -49,6 +49,22 @@ class _ReplyWebSocket:
         )
 
 
+class _DeviceListWebSocket:
+    """Socket that records the request and returns an empty device list."""
+
+    closed = False
+
+    def __init__(self, client: EufySdkApiClient) -> None:
+        self.client = client
+        self.sent: dict[str, Any] | None = None
+
+    async def send_json(self, message: dict[str, Any]) -> None:
+        self.sent = message
+        self.client._pending[message["id"]].set_result(  # noqa: SLF001
+            {"id": message["id"], "ok": True, "devices": []}
+        )
+
+
 class EufySdkApiClientTests(IsolatedAsyncioTestCase):
     """Pin failure handling around the RPC/reconnect boundary."""
 
@@ -79,3 +95,14 @@ class EufySdkApiClientTests(IsolatedAsyncioTestCase):
             await client.connect()
 
         self.assertEqual(session.connect_calls, 0)
+
+    async def test_device_list_can_request_a_fresh_bridge_snapshot(self) -> None:
+        client = EufySdkApiClient("bridge", 3015, _Session())  # type: ignore[arg-type]
+        websocket = _DeviceListWebSocket(client)
+        client._ws = websocket  # type: ignore[assignment]  # noqa: SLF001
+
+        self.assertEqual(await client.list_devices(refresh=True), [])
+        self.assertEqual(
+            websocket.sent,
+            {"id": 1, "cmd": "devices.list", "refresh": True},
+        )

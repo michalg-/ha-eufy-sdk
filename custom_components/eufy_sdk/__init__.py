@@ -69,7 +69,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
 
     def _on_event(evt: dict) -> None:
         hass.bus.async_fire(f"{DOMAIN}_event", evt)
-        if evt.get("event") == "ready":
+        event = evt.get("event")
+        if event == "propertyChanged":
+            coordinator.apply_property_changed(evt)
+        elif event in ("ready", "deviceAdded", "deviceRemoved"):
             _refresh_now()
 
     client = EufySdkApiClient(
@@ -96,11 +99,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
     # Reload when the options change, so a new poll interval is applied.
     entry.async_on_unload(entry.add_update_listener(_async_reload_on_update))
 
-    # Property manifests are static per device — fetch once so the platforms can
-    # build switch/select/number/sensor entities. A device that fails is skipped.
+    # Property manifests ride the initial device list on current bridges, saving one
+    # RPC per device. Keep the old call as a compatibility fallback during upgrades.
     properties: dict[str, list] = {}
     for sn, dev in coordinator.data.items():
         if dev.get("error"):
+            continue
+        embedded = dev.get("properties")
+        if isinstance(embedded, list):
+            properties[sn] = embedded
             continue
         try:
             properties[sn] = await client.get_properties(sn)

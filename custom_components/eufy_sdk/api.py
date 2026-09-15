@@ -242,9 +242,9 @@ class EufySdkApiClient:
         return (await self.rpc("auth.retrigger"))["auth"]
 
     # ── devices ──
-    async def list_devices(self) -> list[dict[str, Any]]:
-        """Every device the bridge exposes (sn/name/model/codec/capabilities/state)."""
-        return (await self.rpc("devices.list"))["devices"]
+    async def list_devices(self, *, refresh: bool = False) -> list[dict[str, Any]]:
+        """Every bridge device; optionally force a fresh SDK/cloud snapshot."""
+        return (await self.rpc("devices.list", refresh=refresh))["devices"]
 
     async def refresh_event_image(self, sn: str) -> bool:
         """Force a 'Last event' image refresh; returns True if a newer image landed."""

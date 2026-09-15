@@ -222,7 +222,7 @@ class EufySdkPropertyEntity(EufySdkDeviceEntity, RestoreEntity):
         which for a genuinely unreadable one is "indefinitely", and that is the
         honest answer, not a bug.
         """
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.async_force_bridge_refresh()
         if self._prop in self.device.get("state", {}):
             self._assumed_value = None
             self.async_write_ha_state()
