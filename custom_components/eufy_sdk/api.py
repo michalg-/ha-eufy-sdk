@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
+from .const import LOGGER
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -135,12 +137,27 @@ class EufySdkApiClient:
         self._reconnect_task = asyncio.ensure_future(self._reconnect())
 
     async def _reconnect(self) -> None:
-        """Reopen the WebSocket with capped backoff until closed/connected."""
+        """
+        Reopen the WebSocket with capped backoff until closed/connected.
+
+        Broad on purpose: `connect()` only ever raises
+        `EufySdkApiClientCommunicationError` itself, but this loop is the ONLY
+        thing standing between one dropped connection and entities stuck
+        `unavailable` for up to `poll_min` minutes (default 10) — the
+        coordinator's own poll is the sole fallback once this task is gone,
+        and nothing restarts it. An exception this loop didn't expect must
+        not be allowed to kill it silently; log it, back off, and keep
+        trying like any other failure.
+        """
         delay = 1
         while not self._closing and not self.connected:
             try:
                 await self.connect()
             except EufySdkApiClientCommunicationError:
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 60)
+            except Exception:  # noqa: BLE001 — see the docstring: must not die
+                LOGGER.exception("eufy_sdk reconnect attempt failed unexpectedly")
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 60)
             else:
