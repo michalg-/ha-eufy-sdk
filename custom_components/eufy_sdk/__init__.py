@@ -10,10 +10,12 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from homeassistant.const import Platform
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.loader import async_get_loaded_integration
 
 from .api import EufySdkApiClient
+from .bespoke import BITFIELD_SWITCHES
 from .const import (
     CONF_HOST,
     CONF_POLL_INTERVAL,
@@ -106,8 +108,60 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
             LOGGER.warning("could not fetch properties for %s: %s", sn, err)
     entry.runtime_data.properties = properties
 
+    _prune_stale_property_entities(hass, entry.entry_id, properties)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+def _prune_stale_property_entities(
+    hass: HomeAssistant, entry_id: str, properties: dict[str, list]
+) -> None:
+    """
+    Remove registry entities for properties the bridge no longer advertises.
+
+    The bridge prunes its manifest to what a device actually reads (see its
+    `propertySpecs`), but that only changes what gets CREATED — an entity from before
+    the prune, or from a property that has simply gone quiet, stays in the registry
+    forever: `available` only checks that the device itself is present, never that its
+    own property still is, so it sits `unavailable` with no way back short of a manual
+    delete. This is the other half of that prune, run every setup so a device that
+    drops a property (or a fresh install that prunes from the start) cleans up on its
+    own.
+
+    Only two entity shapes are ever touched, both built entirely from `properties` —
+    never a static entity (reboot, the PTZ buttons, camera, stream_url, ...), which
+    this cannot even name and so cannot remove by construction:
+      - `{sn}_{propName}`            — the generic property entity (entity.py)
+      - `{sn}_{propName}_{bitmask}`  — one bit of a known bitfield (switch.py), kept
+        exactly as long as `propName` itself (e.g. `aiDetectType`) is still current —
+        the bitfield property's presence, not the sub-switch's, is what the bridge
+        reports.
+    """
+    current: dict[str, set[str]] = {
+        sn: {p["name"] for p in specs} for sn, specs in properties.items()
+    }
+
+    registry = er.async_get(hass)
+    for entry_entity in er.async_entries_for_config_entry(registry, entry_id):
+        sn, _, suffix = entry_entity.unique_id.partition("_")
+        names = current.get(sn)
+        if names is None or not suffix or suffix in names:
+            continue  # wrong device, no property data yet, or still a live property
+
+        bitfield_prop = next(
+            (p for p in BITFIELD_SWITCHES if suffix.startswith(f"{p}_")), None
+        )
+        if bitfield_prop is None:
+            continue  # not property-shaped at all (reboot, ptz_*, camera, ...)
+        if bitfield_prop in names:
+            continue  # the bitfield property is still live — its sub-switch survives
+
+        LOGGER.debug(
+            "removing stale entity %s (property gone from the bridge manifest)",
+            entry_entity.entity_id,
+        )
+        registry.async_remove(entry_entity.entity_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> bool:
