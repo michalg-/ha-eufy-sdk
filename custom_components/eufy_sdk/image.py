@@ -15,7 +15,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import CONF_HOST, CONF_PORT, DOMAIN
 from .entity import EufySdkDeviceEntity
-from .pushmap import EVENT_IMAGE_REFRESH, THUMBNAIL_EVENTS
+from .pushmap import EVENT_IMAGE_REFRESH
 
 if TYPE_CHECKING:
     from homeassistant.core import Event, HomeAssistant
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 # Bridge device events are re-fired on the HA bus under this type (see __init__.py).
 EVENT_TYPE = f"{DOMAIN}_event"
+BRIDGE_CONNECTED_EVENT = "hello"
 
 
 async def async_setup_entry(
@@ -51,10 +52,9 @@ class EufySdkEventImage(EufySdkDeviceEntity, ImageEntity):
     The SDK downloads and retains each event's thumbnail; the bridge serves the
     retained bytes at `/event-image/<sn>`. This entity fetches from the bridge (never
     the raw cloud URL — that needs the SDK's auth/decode). It refreshes on a
-    detection push for the device (events that carry a new thumbnail — not
-    telemetry like ptzNotify) and on the coordinator poll, stamping a new
-    `image_last_updated` only when the bytes change — so an already-retained
-    thumbnail shows even before the first event.
+    bridge's `eventImageUpdated` nudge, after the bridge has actually retained
+    new bytes. It also fetches once at setup and after a WebSocket reconnect,
+    stamping a new `image_last_updated` only when the bytes change.
     """
 
     _attr_name = "Last event"
@@ -74,10 +74,8 @@ class EufySdkEventImage(EufySdkDeviceEntity, ImageEntity):
         self._url = f"http://{host}:{port}/event-image/{sn}"
         self._image: bytes | None = None
         self._hash: str | None = None
-        # A detection push and the eventImageUpdated nudge both trigger a refresh.
-        # Without this the two fetches race: an earlier fetch of the OLD bytes can
-        # finish last and overwrite the new image while stamping a fresh time (time
-        # moves, picture stale). Serialise so the last write is always the newest fetch.
+        # Setup/reconnect and eventImageUpdated can overlap. Serialise so an older
+        # response cannot finish last and overwrite the newest retained image.
         self._refresh_lock = asyncio.Lock()
 
     async def async_added_to_hass(self) -> None:
@@ -89,28 +87,23 @@ class EufySdkEventImage(EufySdkDeviceEntity, ImageEntity):
     @callback
     def _handle_event(self, event: Event) -> None:
         """
-        Re-pull the thumbnail on a detection or the bridge's image-refresh nudge.
+        Re-pull only when the bridge says new image bytes are ready.
 
-        Fires on a detection event for this device, or on the bridge's
-        `eventImageUpdated` nudge once it has a fresh local cover. Telemetry/state
-        events the bridge also forwards (ptzNotify, batteryLevel, armingModeChanged,
-        …) carry no new thumbnail, so they must not stamp a new "Last event" or spam
-        the bridge with refetches. The coordinator poll (`_handle_coordinator_update`)
-        still catches any thumbnail no event announced.
+        A raw detection may not carry a cloud thumbnail and the local crop is written
+        later, so fetching at detection time only produces a 404 or stale bytes. The
+        bridge retries both sources and emits `eventImageUpdated` after bytes change.
+        A `hello` after reconnect catches an update missed while HA was disconnected.
         """
         data = event.data
+        ev = data.get("event")
+        if ev == BRIDGE_CONNECTED_EVENT:
+            self.hass.async_create_task(self._refresh())
+            return
         if data.get("deviceSn") != self._sn:
             return
-        ev = data.get("event")
-        if ev not in THUMBNAIL_EVENTS and ev != EVENT_IMAGE_REFRESH:
+        if ev != EVENT_IMAGE_REFRESH:
             return
         self.hass.async_create_task(self._refresh())
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Piggyback the poll cadence to catch a thumbnail no event announced."""
-        self.hass.async_create_task(self._refresh())
-        super()._handle_coordinator_update()
 
     async def _refresh(self) -> None:
         """

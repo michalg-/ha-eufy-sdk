@@ -66,18 +66,10 @@ DOORBELL_EVENT_TYPE = "pressed"
 # Capabilities that make a device eligible for a Detection event entity.
 DETECTION_CAPABILITIES = frozenset({"motion", "person_detection", "doorbell"})
 
-# Push events that carry a fresh detection thumbnail — the ONLY ones that should
-# re-pull the "Last event" image. Everything else the bridge forwards (ptzNotify,
-# batteryLevel, armingModeChanged, smartLightState, contactState, streamState, …)
-# is telemetry/state with no new thumbnail, so it must never trigger a refetch.
-THUMBNAIL_EVENTS: frozenset[str] = frozenset(
-    set(PUSH_BINARY_SENSORS) | set(DETECTION_EVENTS) | {DOORBELL_EVENT}
-)
-
 # A bridge-side nudge (not a device push): the bridge emits it after it has pulled a
-# fresh event cover from local HomeBase storage and the bytes changed, so the image
-# entity re-fetches now instead of waiting for the next poll. Local-storage accounts
-# have no push thumbnail, so this is what actually advances "Last event" for them.
+# fresh event cover from local or cloud storage and the bytes changed, so the image
+# entity re-fetches only after an image really exists. A raw detection is too early:
+# local-storage accounts have no push thumbnail and write their crop asynchronously.
 EVENT_IMAGE_REFRESH = "eventImageUpdated"
 
 # Push carries no "cleared" signal, so a push binary_sensor auto-offs after this delay.
