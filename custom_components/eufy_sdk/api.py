@@ -67,8 +67,12 @@ class EufySdkApiClient:
 
     async def connect(self) -> None:
         """Open the WebSocket + receive loop (serialized against reconnect)."""
-        self._closing = False
         async with self._connect_lock:
+            # `close()` is terminal for this client instance. In particular, an
+            # in-flight reconnect must not resurrect the socket after an unload.
+            if self._closing:
+                msg = "client is closed"
+                raise EufySdkApiClientCommunicationError(msg)
             if self.connected:
                 return
             try:
@@ -98,37 +102,54 @@ class EufySdkApiClient:
                 )
         self._pending.clear()
 
-    async def _receive_loop(self) -> None:
+    async def _receive_loop(self) -> None:  # noqa: PLR0912
         """Read frames: resolve pending requests by id, dispatch events."""
-        if self._ws is None:
+        ws = self._ws
+        if ws is None:
             return
         try:
-            async for msg in self._ws:
+            async for msg in ws:
                 if msg.type is not aiohttp.WSMsgType.TEXT:
                     continue
-                data = msg.json()
+                try:
+                    data = msg.json()
+                except (TypeError, ValueError):
+                    # One malformed frame must not tear down a healthy socket.
+                    LOGGER.warning("eufy_sdk bridge sent a malformed JSON frame")
+                    continue
+                if not isinstance(data, dict):
+                    LOGGER.warning("eufy_sdk bridge sent a non-object JSON frame")
+                    continue
                 mid = data.get("id")
                 if mid is not None and mid in self._pending:
                     fut = self._pending.pop(mid)
                     if not fut.done():
                         fut.set_result(data)
                 elif data.get("event") and self._on_event:
-                    self._on_event(data)
-        except (aiohttp.ClientError, asyncio.CancelledError):
+                    try:
+                        self._on_event(data)
+                    except Exception:  # noqa: BLE001 - consumer callbacks cannot kill IO
+                        LOGGER.exception("eufy_sdk event callback failed")
+        except asyncio.CancelledError:
+            raise
+        except aiohttp.ClientError:
             pass
+        except Exception:  # noqa: BLE001 - reconnect after an unexpected frame failure
+            LOGGER.exception("eufy_sdk receive loop failed unexpectedly")
         finally:
-            # Clear the socket so `connected` reports the drop, fail in-flight requests,
-            # and (unless deliberately closing) reconnect so events resume promptly, not
-            # only on the next poll.
-            self._ws = None
-            for fut in self._pending.values():
-                if not fut.done():
-                    fut.set_exception(
-                        EufySdkApiClientCommunicationError("connection lost")
-                    )
-            self._pending.clear()
-            if not self._closing:
-                self._schedule_reconnect()
+            # A superseded loop must not clear a newer connection or fail its RPCs.
+            if self._ws is ws:
+                # Clear the socket, fail in-flight requests, and reconnect promptly
+                # unless the integration is deliberately closing.
+                self._ws = None
+                for fut in self._pending.values():
+                    if not fut.done():
+                        fut.set_exception(
+                            EufySdkApiClientCommunicationError("connection lost")
+                        )
+                self._pending.clear()
+                if not self._closing:
+                    self._schedule_reconnect()
 
     def _schedule_reconnect(self) -> None:
         """Start the reconnect supervisor if it isn't already running."""
@@ -164,7 +185,10 @@ class EufySdkApiClient:
                 # Back up after a drop — let the coordinator recover entities now, not
                 # at the next poll.
                 if self._on_reconnect:
-                    self._on_reconnect()
+                    try:
+                        self._on_reconnect()
+                    except Exception:  # noqa: BLE001 - reconnect itself already succeeded
+                        LOGGER.exception("eufy_sdk reconnect callback failed")
                 return
 
     async def rpc(
@@ -174,21 +198,28 @@ class EufySdkApiClient:
         **args: Any,
     ) -> dict[str, Any]:
         """Send a command and await its reply. Raises on `ok: false`."""
-        if not self.connected:
+        ws = self._ws
+        if ws is None or ws.closed:
             msg = "not connected"
             raise EufySdkApiClientCommunicationError(msg)
         self._next_id += 1
         mid = self._next_id
         fut: asyncio.Future[dict[str, Any]] = asyncio.get_event_loop().create_future()
         self._pending[mid] = fut
-        await self._ws.send_json({"id": mid, "cmd": cmd, **args})  # type: ignore[union-attr]
         try:
             async with asyncio.timeout(timeout):
+                await ws.send_json({"id": mid, "cmd": cmd, **args})
                 reply = await fut
         except TimeoutError as err:
-            self._pending.pop(mid, None)
             msg = f"{cmd}: timed out"
             raise EufySdkApiClientCommunicationError(msg) from err
+        except (aiohttp.ClientError, OSError, RuntimeError) as err:
+            msg = f"{cmd}: connection lost while sending"
+            raise EufySdkApiClientCommunicationError(msg) from err
+        finally:
+            self._pending.pop(mid, None)
+            if not fut.done():
+                fut.cancel()
         if not reply.get("ok"):
             raise EufySdkApiClientError(reply.get("error", f"{cmd} failed"))
         return reply

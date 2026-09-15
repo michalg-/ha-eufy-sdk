@@ -45,6 +45,7 @@ PLATFORMS: list[Platform] = [
     Platform.LIGHT,
 ]
 
+
 async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> bool:
     """Set up eufy_sdk from a config entry."""
     poll_min = entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL_MIN)
@@ -107,9 +108,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
             LOGGER.warning("could not fetch properties for %s: %s", sn, err)
     entry.runtime_data.properties = properties
 
-    _prune_stale_property_entities(
-        hass, entry.entry_id, properties, coordinator.data
-    )
+    _prune_stale_property_entities(hass, entry.entry_id, properties, coordinator.data)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

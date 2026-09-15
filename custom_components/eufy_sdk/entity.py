@@ -213,9 +213,9 @@ class EufySdkPropertyEntity(EufySdkDeviceEntity, RestoreEntity):
         """
         Pull fresh state; drop the optimistic hold only once it confirms the write.
 
-        A property the bridge never reads back (several controls on this camera
-        turned out to be exactly that — motion/pet detection, audio recording,
-        night vision) never reappears in `state` no matter how long we wait.
+        A property the bridge genuinely never reads back never reappears in `state`
+        no matter how long we wait. Most T8410 controls now have verified reads, but
+        this remains necessary for other models and write-only capabilities.
         Clearing the hold unconditionally would flip the switch back to "unknown"
         a few seconds after every press despite nothing having failed. Keep
         showing the assumed value until the property is actually present again —
@@ -232,9 +232,9 @@ class EufySdkPropertyEntity(EufySdkDeviceEntity, RestoreEntity):
         Restore the last-written value across an HA restart, for a writable property.
 
         `_assumed_value` lives only in memory (see `write`), so an HA restart loses it —
-        exactly the properties this exists for (motion/pet detection, audio recording,
-        night vision, ...) never reappear in `state` on their own, so they would show
-        "unknown" again despite the camera still holding whatever was last set. Restore
+        exactly the properties this exists for never reappear in `state` on their own,
+        so they would show "unknown" again despite the camera still holding whatever
+        was last set. Restore
         only when the live read is ALREADY absent: a property that reads fine needs no
         help, and a stale restored value should never outrank a fresh one.
         """
