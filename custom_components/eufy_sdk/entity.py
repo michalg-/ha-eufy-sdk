@@ -154,10 +154,22 @@ class EufySdkPropertyEntity(EufySdkDeviceEntity):
         self.hass.async_create_task(self._reconcile())
 
     async def _reconcile(self) -> None:
-        """Pull fresh cloud state, drop the optimistic hold, re-render to truth."""
+        """
+        Pull fresh state; drop the optimistic hold only once it confirms the write.
+
+        A property the bridge never reads back (several controls on this camera
+        turned out to be exactly that — motion/pet detection, audio recording,
+        night vision) never reappears in `state` no matter how long we wait.
+        Clearing the hold unconditionally would flip the switch back to "unknown"
+        a few seconds after every press despite nothing having failed. Keep
+        showing the assumed value until the property is actually present again —
+        which for a genuinely unreadable one is "indefinitely", and that is the
+        honest answer, not a bug.
+        """
         await self.coordinator.async_request_refresh()
-        self._assumed_value = None
-        self.async_write_ha_state()
+        if self._prop in self.device.get("state", {}):
+            self._assumed_value = None
+            self.async_write_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:
         """Cancel a pending delayed refresh when the entity goes away."""
